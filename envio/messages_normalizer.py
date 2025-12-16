@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -57,7 +57,12 @@ def parse_timestamp_to_ms(ts: Any) -> Optional[int]:
 
 # ---------- ACTOR RESOLUTION ----------------
 
-def resolve_actor(us_origen: Any, raw_msg: dict) -> Tuple[str, Optional[str]]:
+def resolve_actor(us_origen: Any, raw_msg: dict) -> (str, Optional[str]):
+    """
+    Devuelve (actor_type, actor_email).
+    actor_type = "CUSTOMER" | "BOT" | "AGENT" | "UNKNOWN"
+    actor_email = email del agente si aplica.
+    """
     if not us_origen:
         return "UNKNOWN", None
 
@@ -83,6 +88,17 @@ def resolve_actor(us_origen: Any, raw_msg: dict) -> Tuple[str, Optional[str]]:
 # ---------- PARSEO ESPECIAL: DUMP PYTHON --------------
 
 def _try_parse_python_dump_string(s: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Intenta parsear un string que parece un dump de Python, del estilo:
+
+    "[{'message_time': datetime.datetime(...), 'us_origen': 'user', 'mensaje': 'Hola', 'audios': None,
+       'operador_nombre': '...', 'operador_email': '...', 'operador_rol': '...', 'departamento': '...'}
+      {...}]"
+
+    Ahora preservamos también operador_email, operador_nombre, operador_rol y departamento,
+    para que luego puedan usarse en la resolución de agentes.
+    """
+
     # Heurística: si no tiene estas claves, ni lo intentamos
     if "datetime.datetime" not in s or "'us_origen':" not in s or "'mensaje':" not in s:
         return None
@@ -125,7 +141,6 @@ def _try_parse_python_dump_string(s: str) -> Optional[List[Dict[str, Any]]]:
                     else:
                         # dejamos de leer cuando ya no son números
                         break
-                
                 if len(ints) >= 3:
                     year = ints[0]
                     month = ints[1]
@@ -186,6 +201,7 @@ def _try_parse_python_dump_string(s: str) -> Optional[List[Dict[str, Any]]]:
 # ---------- PARSEO DE MENSAJES --------------
 
 def load_raw_messages(mensajes_raw: Any) -> List[Any]:
+
     # Caso lista nativa
     if isinstance(mensajes_raw, list):
         return mensajes_raw
@@ -214,10 +230,7 @@ def load_raw_messages(mensajes_raw: Any) -> List[Any]:
         # 1) Intentar parsear como JSON correctamente
         try:
             parsed = json.loads(s)
-            # parsed puede ser:
-            # - list
-            # - dict
-            # - string (caso típico: mensajes_json = json.dumps("<dump python>")
+
             if isinstance(parsed, list):
                 return parsed
             if isinstance(parsed, dict):
@@ -228,7 +241,6 @@ def load_raw_messages(mensajes_raw: Any) -> List[Any]:
                 if inner_parsed is not None:
                     return inner_parsed
         except Exception:
-            # no es JSON válido, seguimos al siguiente intento
             pass
 
         # 2) Intentar parsear el string original como dump Python
@@ -250,6 +262,11 @@ def load_raw_messages(mensajes_raw: Any) -> List[Any]:
 # ---------- NORMALIZACIÓN -------------------
 
 def normalize_messages(mensajes_raw: Any) -> List[NormalizedMessage]:
+    """
+    Recibe la columna "mensajes" cruda del job y devuelve
+    una lista ordenada de NormalizedMessage.
+    """
+
     raw_items = load_raw_messages(mensajes_raw)
     output: List[NormalizedMessage] = []
 
